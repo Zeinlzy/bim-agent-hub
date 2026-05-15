@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import hashlib
+import hmac as hmac_module
 import logging
 
 from fastapi import Request
@@ -8,14 +8,14 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
+from app.common.keygen import hash_api_key
 from app.config import settings
-from app.core.exceptions import AuthenticationError
 from app.db.connection import async_session_factory
 from app.models.api_key import ApiKeyModel
 
 logger = logging.getLogger(__name__)
 
-EXEMPT_PATHS = {"/v1/health", "/docs", "/redoc", "/openapi.json"}
+EXEMPT_PATHS = {"/v1/health", "/v1/health/live", "/v1/health/ready", "/docs", "/redoc", "/openapi.json"}
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -34,9 +34,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
             )
 
         api_key = auth_header[7:]
-        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        key_hash = hash_api_key(api_key)
 
-        if settings.admin_api_key and api_key == settings.admin_api_key:
+        if settings.admin_api_key and hmac_module.compare_digest(api_key, settings.admin_api_key):
             request.state.api_key_name = "admin"
             return await call_next(request)
 
@@ -55,7 +55,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                         status_code=401,
                     )
                 request.state.api_key_name = key_row.name
-        except Exception:
+        except (OSError, ConnectionError):
             logger.exception("Auth DB error")
             return JSONResponse(
                 {"error": {"code": "internal_error", "message": "Authentication service unavailable"}},

@@ -4,20 +4,13 @@ import uuid
 from datetime import datetime
 
 from agents import RunResult, RunResultStreaming, Usage
-from sqlalchemy import func as sa_func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.db.repositories import usage_log_repo
 from app.models.usage_log import UsageLogModel
 from app.schemas.usage import UsageSummary
-
-
-def _calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    pricing = settings.model_pricing.get(model)
-    if not pricing:
-        return 0.0
-    input_cost, output_cost = pricing
-    return (input_tokens / 1_000_000 * input_cost) + (output_tokens / 1_000_000 * output_cost)
+from app.services.pricing import pricing_service
 
 
 class UsageService:
@@ -35,7 +28,8 @@ class UsageService:
 
         model = result.raw_responses[0].usage.model if result.raw_responses and result.raw_responses[0].usage else ""
 
-        log = UsageLogModel(
+        return await usage_log_repo.create(
+            db,
             session_id=uuid.UUID(session_id) if session_id else None,
             agent_id=agent_id,
             model=model or settings.openai_model,
@@ -47,66 +41,32 @@ class UsageService:
             requests=usage.requests,
             duration_ms=duration_ms,
         )
-        db.add(log)
-        await db.flush()
-        return log
 
     async def get_summary(
         self, db: AsyncSession, since: datetime | None = None, until: datetime | None = None
     ) -> UsageSummary:
-        query = select(
-            sa_func.coalesce(sa_func.sum(UsageLogModel.input_tokens), 0),
-            sa_func.coalesce(sa_func.sum(UsageLogModel.output_tokens), 0),
-            sa_func.coalesce(sa_func.sum(UsageLogModel.total_tokens), 0),
-            sa_func.count(UsageLogModel.id),
-        )
-        if since:
-            query = query.where(UsageLogModel.created_at >= since)
-        if until:
-            query = query.where(UsageLogModel.created_at <= until)
-
-        result = await db.execute(query)
-        row = result.one()
-        total_input = row[0]
-        total_output = row[1]
-        total_tokens = row[2]
-        count = row[3]
-
+        total_input, total_output, total_tokens, count = await usage_log_repo.get_summary(db, since=since, until=until)
         return UsageSummary(
             total_input_tokens=total_input,
             total_output_tokens=total_output,
             total_tokens=total_tokens,
-            total_cost=_calculate_cost(settings.openai_model, total_input, total_output),
+            total_cost=pricing_service.get_cost(settings.openai_model, total_input, total_output),
             run_count=count,
         )
 
     async def get_summary_by_agent(
         self, db: AsyncSession, since: datetime | None = None, until: datetime | None = None
     ) -> dict[str, UsageSummary]:
-        query = select(
-            UsageLogModel.agent_id,
-            sa_func.coalesce(sa_func.sum(UsageLogModel.input_tokens), 0),
-            sa_func.coalesce(sa_func.sum(UsageLogModel.output_tokens), 0),
-            sa_func.coalesce(sa_func.sum(UsageLogModel.total_tokens), 0),
-            sa_func.count(UsageLogModel.id),
-        ).group_by(UsageLogModel.agent_id)
-
-        if since:
-            query = query.where(UsageLogModel.created_at >= since)
-        if until:
-            query = query.where(UsageLogModel.created_at <= until)
-
-        result = await db.execute(query)
-        rows = result.all()
+        rows = await usage_log_repo.get_summary_by_agent(db, since=since, until=until)
         return {
-            row.agent_id: UsageSummary(
-                total_input_tokens=row[1],
-                total_output_tokens=row[2],
-                total_tokens=row[3],
-                total_cost=_calculate_cost(settings.openai_model, row[1], row[2]),
-                run_count=row[4],
+            agent_id: UsageSummary(
+                total_input_tokens=inp,
+                total_output_tokens=out,
+                total_tokens=total,
+                total_cost=pricing_service.get_cost(settings.openai_model, inp, out),
+                run_count=count,
             )
-            for row in rows
+            for agent_id, inp, out, total, count in rows
         }
 
     async def get_logs(
@@ -116,20 +76,7 @@ class UsageService:
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[UsageLogModel], int]:
-        query = select(UsageLogModel)
-        count_query = select(sa_func.count(UsageLogModel.id))
-
-        if agent_id:
-            query = query.where(UsageLogModel.agent_id == agent_id)
-            count_query = count_query.where(UsageLogModel.agent_id == agent_id)
-
-        count_result = await db.execute(count_query)
-        total = count_result.scalar() or 0
-
-        query = query.order_by(UsageLogModel.created_at.desc()).limit(limit).offset(offset)
-        result = await db.execute(query)
-
-        return list(result.scalars().all()), total
+        return await usage_log_repo.get_logs(db, agent_id=agent_id, limit=limit, offset=offset)
 
 
 usage_service = UsageService()

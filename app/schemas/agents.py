@@ -12,12 +12,13 @@ class AgentInfo(BaseModel):
 
 class AgentListResponse(BaseModel):
     agents: list[AgentInfo]
+    total: int = 0
 
 
 class AgentCreateRequest(BaseModel):
-    name: str
-    instructions: str
-    model: str | None = None
+    name: str = Field(..., max_length=100)
+    instructions: str = Field(..., max_length=10000)
+    model: str | None = Field(None, max_length=100)
     handoff_agents: list[str] = Field(default_factory=list)
     metadata: dict = Field(default_factory=dict)
 

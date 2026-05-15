@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncGenerator
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.repositories import conversation_repo, message_repo
 from app.models.conversation import ConversationModel, MessageModel
 
 
@@ -13,20 +12,10 @@ class ConversationService:
     async def get_or_create(
         self, session_id: uuid.UUID, agent_name: str | None, db: AsyncSession
     ) -> ConversationModel:
-        result = await db.execute(
-            select(ConversationModel).where(ConversationModel.session_id == session_id)
-        )
-        conv = result.scalar_one_or_none()
+        conv = await conversation_repo.get_by_session_id(db, session_id)
         if conv:
             return conv
-
-        conv = ConversationModel(
-            session_id=session_id,
-            agent_name=agent_name,
-        )
-        db.add(conv)
-        await db.flush()
-        return conv
+        return await conversation_repo.create(db, session_id, agent_name)
 
     async def add_message(
         self,
@@ -36,66 +25,42 @@ class ConversationService:
         db: AsyncSession,
         metadata: dict | None = None,
     ) -> MessageModel:
-        msg = MessageModel(
-            conversation_id=conversation_id,
-            role=role,
-            content=content,
-            metadata_=metadata or {},
-        )
-        db.add(msg)
-        await db.flush()
-        return msg
+        return await message_repo.add_message(conversation_id, role, content, db, metadata=metadata)
 
     async def get_history(
         self, session_id: uuid.UUID, db: AsyncSession, limit: int = 50, offset: int = 0
     ) -> list[MessageModel]:
-        result = await db.execute(
-            select(ConversationModel).where(ConversationModel.session_id == session_id)
-        )
-        conv = result.scalar_one_or_none()
+        conv = await conversation_repo.get_by_session_id(db, session_id)
         if not conv:
             return []
-
-        result = await db.execute(
-            select(MessageModel)
-            .where(MessageModel.conversation_id == conv.id)
-            .order_by(MessageModel.created_at.asc())
-            .limit(limit)
-            .offset(offset)
-        )
-        return list(result.scalars().all())
+        return await message_repo.get_by_conversation(conv.id, db, limit=limit, offset=offset)
 
     async def get_conversation(
         self, session_id: uuid.UUID, db: AsyncSession
     ) -> ConversationModel | None:
-        result = await db.execute(
-            select(ConversationModel).where(ConversationModel.session_id == session_id)
+        return await conversation_repo.get_by_session_id(db, session_id)
+
+    async def get_conversation_detail(
+        self, session_id: uuid.UUID, db: AsyncSession,
+        message_limit: int | None = 50, message_offset: int = 0,
+    ) -> tuple[ConversationModel, list[MessageModel]] | None:
+        conv = await conversation_repo.get_by_session_id(db, session_id)
+        if not conv:
+            return None
+        messages = await message_repo.get_by_conversation(
+            conv.id, db, limit=message_limit, offset=message_offset
         )
-        return result.scalar_one_or_none()
+        return conv, messages
 
     async def list_conversations(
         self, db: AsyncSession, limit: int = 50, offset: int = 0
     ) -> list[ConversationModel]:
-        result = await db.execute(
-            select(ConversationModel)
-            .order_by(ConversationModel.updated_at.desc())
-            .limit(limit)
-            .offset(offset)
-        )
-        return list(result.scalars().all())
+        return await conversation_repo.list_conversations(db, limit=limit, offset=offset)
 
     async def delete_conversation(
         self, session_id: uuid.UUID, db: AsyncSession
     ) -> bool:
-        result = await db.execute(
-            select(ConversationModel).where(ConversationModel.session_id == session_id)
-        )
-        conv = result.scalar_one_or_none()
-        if not conv:
-            return False
-        await db.delete(conv)
-        await db.flush()
-        return True
+        return await conversation_repo.delete(db, session_id)
 
 
 conversation_service = ConversationService()

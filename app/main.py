@@ -8,7 +8,7 @@ from redis.asyncio import Redis
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.agents.registry import register_default_agents
+from app.agents.seed import seed_default_agents
 from app.api import chat as chat_router
 from app.api import agents as agents_router
 from app.api import admin_api_keys as admin_keys_router
@@ -19,7 +19,7 @@ from app.api import usage as usage_router
 from app.config import settings
 from app.core.exceptions import AppError
 from app.core.logging import setup_logging
-from app.db.connection import dispose_db, init_db
+from app.db.connection import dispose_db
 from app.middleware.auth import AuthMiddleware
 from app.middleware.error_handler import app_error_handler, unhandled_error_handler
 from app.middleware.logging import RequestLoggingMiddleware
@@ -36,8 +36,6 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     os.environ.setdefault("OPENAI_API_KEY", settings.openai_api_key)
     os.environ.setdefault("OPENAI_BASE_URL", settings.openai_base_url)
-
-    await init_db()
 
     if settings.run_migrations_on_startup:
         from alembic.config import Config as AlembicConfig
@@ -65,7 +63,14 @@ async def lifespan(app: FastAPI):
             logger.warning("Redis unavailable: %s", e)
             app.state.redis = None
 
-    await register_default_agents()
+    if settings.tool_dynamic_exec_enabled:
+        logger.warning(
+            "tool_dynamic_exec_enabled=True — user-submitted Python code will be executed "
+            "via exec() IN-PROCESS without subprocess isolation. "
+            "Only enable if all users with POST /v1/tools access are fully trusted."
+        )
+
+    await seed_default_agents()
     await register_default_tools()
 
     yield
@@ -84,7 +89,7 @@ app = FastAPI(
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -5,9 +5,9 @@ from pydantic import BaseModel, Field
 
 
 class ToolCreateRequest(BaseModel):
-    name: str
-    description: str = ""
-    code: str
+    name: str = Field(..., max_length=100)
+    description: str = Field("", max_length=5000)
+    code: str = Field(..., max_length=50000)
     parameters: dict = Field(default_factory=dict)
 
 
@@ -30,3 +30,4 @@ class ToolInfoResponse(BaseModel):
 
 class ToolListResponse(BaseModel):
     tools: list[ToolInfoResponse]
+    total: int = 0

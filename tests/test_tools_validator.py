@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.tools.sandbox import validate_tool_code
+from app.tools.validator import validate_tool_code
 
 
 def test_valid_simple_tool():

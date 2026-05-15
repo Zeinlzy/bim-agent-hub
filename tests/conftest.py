@@ -28,9 +28,6 @@ def _seed_test_data():
         tool_registry.register(fn)
 
 
-_seed_test_data()
-
-
 from app.main import app  # noqa: E402
 
 

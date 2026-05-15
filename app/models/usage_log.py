@@ -6,7 +6,7 @@ from sqlalchemy import DateTime, Index, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.agent import Base
+from app.db.base import Base
 
 
 class UsageLogModel(Base):

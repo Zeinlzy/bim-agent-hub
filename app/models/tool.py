@@ -6,7 +6,7 @@ from sqlalchemy import Boolean, DateTime, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.agent import Base
+from app.db.base import Base
 
 
 class ToolModel(Base):

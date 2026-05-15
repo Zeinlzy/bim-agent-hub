@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ChatMessage(BaseModel):
-    role: str = "user"
-    content: str
+    role: str = Field("user", max_length=20)
+    content: str = Field(..., max_length=100000)
 
 
 class ChatCompletionRequest(BaseModel):

@@ -72,8 +72,6 @@ ALLOWED_NODE_TYPES = {
     ast.Str,
     ast.Num,
     ast.Delete,
-    ast.Global,
-    ast.Nonlocal,
     ast.Index,
     ast.Load,
     ast.Store,
@@ -103,6 +101,20 @@ FORBIDDEN_MODULES = {
     "marshal",
     "importlib",
     "builtins",
+    "code",
+    "gc",
+    "inspect",
+    "traceback",
+    "linecache",
+    "_thread",
+    "platform",
+    "posix",
+    "resource",
+    "atexit",
+    "imp",
+    "runpy",
+    "pdb",
+    "bdb",
 }
 
 FORBIDDEN_NAMES = {
@@ -121,6 +133,10 @@ FORBIDDEN_NAMES = {
     "setattr",
     "delattr",
     "__builtins__",
+    "type",
+    "object",
+    "super",
+    "memoryview",
 }
 
 FORBIDDEN_ATTR_PREFIXES = {
@@ -134,6 +150,10 @@ FORBIDDEN_ATTR_PREFIXES = {
     "__init__",
     "__dict__",
     "__builtins__",
+    "__getattribute__",
+    "__reduce__",
+    "__reduce_ex__",
+    "__init_subclass__",
 }
 
 

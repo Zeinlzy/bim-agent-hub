@@ -18,9 +18,5 @@ async_session_factory = async_sessionmaker(
 )
 
 
-async def init_db() -> None:
-    pass
-
-
 async def dispose_db() -> None:
     await engine.dispose()

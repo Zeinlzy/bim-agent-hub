@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Callable
 
 from agents import function_tool
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core.exceptions import ToolValidationError
+from app.db.repositories import tool_repo
 from app.models.tool import ToolModel
-from app.tools.sandbox import validate_tool_code
+from app.tools.compiler import ToolCompiler
+from app.tools.validator import validate_tool_code
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +22,26 @@ _BUILTIN_TOOLS: dict[str, tuple[str, str]] = {}
 class ToolRegistry:
     def __init__(self):
         self._tools: dict[str, Callable] = {}
+        self._compiler = ToolCompiler()
+        self._last_loaded: float = 0.0
+
+    async def refresh(self, db: AsyncSession) -> None:
+        try:
+            if settings.cache_ttl_seconds == 0:
+                await self.load_from_db(db)
+                return
+            if time.monotonic() - self._last_loaded < settings.cache_ttl_seconds:
+                return
+            await self.load_from_db(db)
+            self._last_loaded = time.monotonic()
+        except Exception:
+            logger.warning("Failed to refresh tool cache, serving stale data")
+
+    def _reset_ttl(self) -> None:
+        self._last_loaded = 0.0
 
     async def load_from_db(self, db: AsyncSession) -> None:
-        result = await db.execute(
-            select(ToolModel).where(ToolModel.is_active == True)
-        )
-        rows = result.scalars().all()
+        rows = await tool_repo.list_active(db)
         self._tools.clear()
 
         for row in rows:
@@ -39,29 +55,13 @@ class ToolRegistry:
             if not code:
                 continue
 
-            if row.tool_type == "python" and settings.tool_validation_enabled:
-                try:
-                    validate_tool_code(code, row.name)
-                except ToolValidationError as e:
-                    logger.error("Skipping invalid tool '%s': %s", row.name, e)
-                    continue
-
             try:
-                fn = self._compile_tool(row.name, code)
-                wrapped = function_tool(fn)
-                self._tools[row.name] = wrapped
+                fn = self._compiler.compile_from_model(row, code=code)
+                self._tools[row.name] = fn
             except Exception as e:
                 logger.error("Failed to load tool '%s': %s", row.name, e)
 
         logger.info("Loaded %d tools from database", len(self._tools))
-
-    def _compile_tool(self, name: str, code: str) -> Callable:
-        namespace: dict[str, Any] = {"__builtins__": {}}
-        exec(code, namespace)
-        fn = namespace.get(name)
-        if not fn:
-            raise ValueError(f"Function '{name}' not found in tool code")
-        return fn
 
     def register(self, fn: Callable | None = None, name: str | None = None) -> Callable:
         if fn is None:
@@ -72,23 +72,19 @@ class ToolRegistry:
         return wrapped
 
     async def register_dynamic(
-        self, name: str, description: str, code: str, parameters: dict, db: AsyncSession
+        self, name: str, description: str, code: str, parameters: dict[str, Any], db: AsyncSession
     ) -> ToolModel:
-        if settings.tool_validation_enabled:
-            validate_tool_code(code, name)
-        fn = self._compile_tool(name, code)
+        fn = self._compiler.compile(name, code)
         wrapped = function_tool(fn)
         self._tools[name] = wrapped
 
-        existing = await db.execute(
-            select(ToolModel).where(ToolModel.name == name)
-        )
-        row = existing.scalar_one_or_none()
-        if row:
-            row.description = description
-            row.code = code
-            row.parameters = parameters
-            row.tool_type = "python"
+        existing = await tool_repo.get_by_name(db, name)
+        if existing:
+            existing.description = description
+            existing.code = code
+            existing.parameters = parameters
+            existing.tool_type = "python"
+            row = existing
         else:
             row = ToolModel(
                 name=name,
@@ -99,7 +95,17 @@ class ToolRegistry:
             )
             db.add(row)
         await db.flush()
+        self._reset_ttl()
         return row
+
+    def recompile_tool(self, name: str, code: str) -> None:
+        fn = self._compiler.compile(name, code)
+        self._tools[name] = function_tool(fn)
+        self._reset_ttl()
+
+    def remove_tool(self, name: str) -> None:
+        self._tools.pop(name, None)
+        self._reset_ttl()
 
     def get_tool(self, name: str) -> Callable | None:
         return self._tools.get(name)
@@ -133,14 +139,12 @@ async def register_default_tools() -> None:
         _BUILTIN_TOOLS[fn.__name__] = (fn.__doc__ or "", inspect.getsource(fn))
         tool_registry.register(fn)
 
-    from app.db.session import get_db
+    from app.db.session import get_db_session
 
-    async for db in get_db():
+    async with get_db_session() as db:
         for name, (desc, code) in _BUILTIN_TOOLS.items():
-            existing = await db.execute(
-                select(ToolModel).where(ToolModel.name == name)
-            )
-            if not existing.scalar_one_or_none():
+            existing = await tool_repo.get_by_name(db, name)
+            if not existing:
                 db.add(
                     ToolModel(
                         name=name,

@@ -11,7 +11,7 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-EXEMPT_PATHS = {"/v1/health", "/docs", "/redoc", "/openapi.json"}
+EXEMPT_PATHS = {"/v1/health", "/v1/health/live", "/v1/health/ready", "/docs", "/redoc", "/openapi.json"}
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -31,14 +31,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             now = int(time.time())
             window = 60
             pipeline = redis.pipeline()
-            pipeline.zadd(key, {str(now + i): now + i for i in range(1)})
+            pipeline.zadd(key, {str(now): now})
             pipeline.zremrangebyscore(key, 0, now - window)
             pipeline.zcard(key)
             pipeline.expire(key, window)
             results = await pipeline.execute()
             count = results[2] if results else 0
 
-            if count and int(count) > threshold:
+            if isinstance(count, (int, float)) and count > threshold:
                 return JSONResponse(
                     {
                         "error": {
@@ -49,7 +49,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     status_code=429,
                     headers={"Retry-After": "60"},
                 )
-        except Exception:
+        except (OSError, ConnectionError):
             logger.exception("Rate limit check failed, allowing request")
             return await call_next(request)
 

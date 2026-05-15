@@ -27,6 +27,10 @@ class ConversationNotFoundError(NotFoundError):
     error_code = "conversation_not_found"
 
 
+class ApiKeyNotFoundError(NotFoundError):
+    error_code = "api_key_not_found"
+
+
 class ValidationError(AppError):
     status_code = 422
     error_code = "validation_error"
