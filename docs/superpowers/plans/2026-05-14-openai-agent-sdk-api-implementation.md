@@ -569,7 +569,7 @@ services:
 - [ ] **Step 1: Build the Docker image**
 
 ```bash
-cd /d/openai-agent-api
+cd /d/bim-agent-hub
 docker compose build
 ```
 
@@ -578,7 +578,7 @@ Expected: Build succeeds with no errors.
 - [ ] **Step 2: Verify project file tree**
 
 ```bash
-cd /d/openai-agent-api && find . -type f | sort
+cd /d/bim-agent-hub && find . -type f | sort
 ```
 
 Expected: All project files present.
